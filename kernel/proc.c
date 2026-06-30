@@ -124,6 +124,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->rudeness = 10; // Initialize rudeness level
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -169,6 +170,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->rudeness = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -438,23 +440,36 @@ scheduler(void)
     intr_off();
 
     int found = 0;
+    int cumulative_rudeness = 3;
+
+    // Find the cumulative rudeness level among RUNNABLE processes
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if (p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
+        cumulative_rudeness += p->rudeness;
+      }
+      release(&p->lock);
+    }
+
+    // Run each RUNNABLE process with a time slice proportional to its rudeness level
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE) {
+        int slice = (p->rudeness * 50) / cumulative_rudeness;
+        if (slice < 1) {
+          slice = 1; // Ensure at least one tick
+        }
         c->proc = p;
+        p->time_slice = slice;
+        p->state = RUNNING;
         swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
         c->proc = 0;
         found = 1;
       }
       release(&p->lock);
     }
+
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
@@ -689,4 +704,14 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+rude(int r)
+{
+  struct proc *p = myproc();
+  acquire(&p->lock);
+  p->rudeness = r;
+  release(&p->lock);
+  return 0;
 }

@@ -107,3 +107,11 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_rude(void)
+{
+  int r;
+  argint(0, &r);
+  return rude(r);
+}
